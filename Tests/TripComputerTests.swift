@@ -25,14 +25,17 @@ final class TripComputerTests: XCTestCase {
         first.vehicleSpeedKmh = .simulated(100)
         computer.update(with: first, fuelRateLitersPerHour: 6.0)
 
+        // update() rejects gaps >= 5s (stale/timeout guard), so ticks must
+        // be close together — scale expected values to a 1-second tick
+        // instead of assuming a full hour elapsed.
         var second = TelemetrySnapshot.empty
-        second.timestamp = start.addingTimeInterval(3600) // exactly 1 hour later
+        second.timestamp = start.addingTimeInterval(1)
         second.vehicleSpeedKmh = .simulated(100)
         computer.update(with: second, fuelRateLitersPerHour: 6.0)
 
-        XCTAssertEqual(computer.currentTrip.value.distanceKm, 100, accuracy: 0.01)
-        XCTAssertEqual(computer.currentTrip.value.fuelUsedLiters, 6.0, accuracy: 0.01)
-        XCTAssertEqual(computer.currentTrip.value.elapsedSeconds, 3600, accuracy: 0.01)
+        XCTAssertEqual(computer.currentTrip.value.distanceKm, 100.0 / 3600.0, accuracy: 0.0001)
+        XCTAssertEqual(computer.currentTrip.value.fuelUsedLiters, 6.0 / 3600.0, accuracy: 0.0001)
+        XCTAssertEqual(computer.currentTrip.value.elapsedSeconds, 1, accuracy: 0.01)
     }
 
     func testIgnoresGapsLongerThanFiveSeconds() {
@@ -60,14 +63,14 @@ final class TripComputerTests: XCTestCase {
         first.vehicleSpeedKmh = .simulated(60)
         computer.update(with: first, fuelRateLitersPerHour: 5.0)
         var second = TelemetrySnapshot.empty
-        second.timestamp = start.addingTimeInterval(3600)
+        second.timestamp = start.addingTimeInterval(1)
         second.vehicleSpeedKmh = .simulated(60)
         computer.update(with: second, fuelRateLitersPerHour: 5.0)
 
         computer.resetCurrentTrip()
 
         XCTAssertEqual(computer.currentTrip.value.distanceKm, 0)
-        XCTAssertEqual(computer.sinceReset.value.distanceKm, 60, accuracy: 0.01)
+        XCTAssertEqual(computer.sinceReset.value.distanceKm, 60.0 / 3600.0, accuracy: 0.0001)
     }
 
     func testAverageConsumptionNilUntilMeaningfulDistance() throws {
