@@ -70,13 +70,14 @@ final class TripComputerTests: XCTestCase {
         XCTAssertEqual(computer.sinceReset.value.distanceKm, 60, accuracy: 0.01)
     }
 
-    func testAverageConsumptionNilUntilMeaningfulDistance() {
+    func testAverageConsumptionNilUntilMeaningfulDistance() throws {
         var record = TripRecord()
         record.distanceKm = 0.01
         record.fuelUsedLiters = 1.0
         XCTAssertNil(record.averageConsumptionPer100km)
 
         record.distanceKm = 10
-        XCTAssertEqual(record.averageConsumptionPer100km, 10, accuracy: 0.01)
+        let average = try XCTUnwrap(record.averageConsumptionPer100km)
+        XCTAssertEqual(average, 10, accuracy: 0.01)
     }
 }
