@@ -63,7 +63,13 @@ so **none of this code has been compiled yet**. Build it on a Mac:
 
 1. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
 2. From the `OBD2Dashboard/` directory: `xcodegen generate`
-3. Open `OBD2Dashboard.xcodeproj` in Xcode 15.4+.
+3. Open `OBD2Dashboard.xcodeproj` in **the latest Xcode you have**. Homebrew
+   always installs XcodeGen's latest release, which writes the `.pbxproj`
+   in whatever file format that release currently defaults to — if your
+   installed Xcode is noticeably older than the XcodeGen release, it may
+   refuse to open the project ("future Xcode project file format"). If
+   that happens, either update Xcode or pin an older XcodeGen release that
+   matches your Xcode's supported format.
 4. Select the `OBD2Dashboard` scheme, an iPad simulator or device, and run.
    Code signing is disabled in `project.yml` (`CODE_SIGNING_REQUIRED: NO`)
    so it builds unsigned — fine for simulator/jailbroken-device sideload,

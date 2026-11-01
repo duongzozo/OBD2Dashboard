@@ -13,10 +13,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4
+      # Pinning to an older Xcode (e.g. 15.4) causes a version-skew failure:
+      # Homebrew always installs the latest XcodeGen, which writes project
+      # files in whatever pbxproj format its current release defaults to —
+      # an old pinned Xcode may be unable to open a newer format. Using the
+      # runner's latest stable Xcode keeps generator and IDE in lockstep.
+      - name: Select latest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '15.4'
+          xcode-version: 'latest-stable'
 
       - name: Install XcodeGen
         run: brew install xcodegen
