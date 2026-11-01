@@ -121,10 +121,12 @@ final class DashboardViewController: UIViewController {
             self?.headerView.update(vehicleName: self?.viewModel.vehicleName.value ?? "", clockText: clock)
         }
 
-        viewModel.connectionState.observe { [weak self] state in
+        viewModel.bluetoothState.observe { [weak self] state in
             self?.headerView.bluetoothStatusPill.update(for: state)
-            self?.headerView.ecuStatusPill.update(for: state)
             self?.footerView.connectionStatusPill.update(for: state)
+        }
+        viewModel.ecuState.observe { [weak self] state in
+            self?.headerView.ecuStatusPill.update(for: state)
         }
 
         viewModel.snapshot.observe { [weak self] snapshot in

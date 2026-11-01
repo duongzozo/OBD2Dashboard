@@ -20,7 +20,7 @@ final class RootTabBarController: UITabBarController {
             wrap(FuelEconomyViewController(), title: "Fuel Economy"),
             wrap(DiagnosticViewController(), title: "Diagnostic"),
             wrap(TripComputerViewController(), title: "Trip Computer"),
-            wrap(VehicleInfoViewController(), title: "Vehicle Info"),
+            wrap(ConnectionViewController(bluetoothManager: .shared), title: "Vehicle Info"),
             wrap(SettingsViewController(), title: "Settings")
         ]
     }

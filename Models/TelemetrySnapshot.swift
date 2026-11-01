@@ -12,6 +12,10 @@ struct TelemetryValue: Equatable {
     static func simulated(_ value: Double, at timestamp: Date = Date()) -> TelemetryValue {
         TelemetryValue(value: value, source: .simulated, timestamp: timestamp)
     }
+
+    static func ecuReported(_ value: Double, at timestamp: Date = Date()) -> TelemetryValue {
+        TelemetryValue(value: value, source: .ecuReported, timestamp: timestamp)
+    }
 }
 
 /// A full set of vehicle parameters at one point in time. Fields are optional
@@ -35,6 +39,7 @@ struct TelemetrySnapshot: Equatable {
     var shortTermFuelTrimPercent: TelemetryValue?
     var longTermFuelTrimPercent: TelemetryValue?
     var timingAdvanceDegrees: TelemetryValue?
+    var oxygenSensor1VoltageVolts: TelemetryValue?
 
     static let empty = TelemetrySnapshot()
 }
