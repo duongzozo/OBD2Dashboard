@@ -1,0 +1,22 @@
+## Xcode
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+.DS_Store
+
+## XcodeGen generates the project from project.yml — don't commit the output.
+
+## Swift Package Manager
+.build/
+Packages/
+.swiftpm/
+
+## CocoaPods / Carthage (not used, kept for safety if added later)
+Pods/
+Carthage/Build/
+
+## IPA artifacts
+*.ipa
