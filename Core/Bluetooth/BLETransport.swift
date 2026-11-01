@@ -61,25 +61,9 @@ final class BLETransport: NSObject, BluetoothTransport {
         }
     }
 
-    // TEMPORARY diagnostic logging — see conversation history. Remove once
-    // the root cause of zero-result BLE scans is confirmed fixed.
-    private func debugLog(_ message: String) {
-        let line = "\(Date()): \(message)\n"
-        let path = "/var/mobile/Documents/ble_debug.log"
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: path), let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            handle.closeFile()
-        } else {
-            try? data.write(to: URL(fileURLWithPath: path))
-        }
-    }
-
     func startScan(onDiscovered: @escaping (DiscoveredPeripheral) -> Void) {
         self.onDiscovered = onDiscovered
         discoveredPeripherals.removeAll()
-        debugLog("startScan called, centralManager.state=\(centralManager.state.rawValue), isScanning=\(centralManager.isScanning)")
         guard centralManager.state == .poweredOn else {
             setState(.error("Bluetooth is off or unavailable"))
             return
@@ -87,17 +71,25 @@ final class BLETransport: NSObject, BluetoothTransport {
         setState(.scanning)
         // Unfiltered scan so the Connection screen can list any nearby BLE
         // device by name — useful while the exact service UUID is still
-        // being confirmed against the real adapter. allowDuplicates forces
-        // CoreBluetooth to report every advertisement packet instead of
-        // coalescing — testing whether that's where discovery is silently
-        // getting dropped.
-        centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
-        debugLog("scanForPeripherals called, isScanning=\(centralManager.isScanning)")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            guard let self = self else { return }
-            self.debugLog("3s after scan start: isScanning=\(self.centralManager.isScanning), state=\(self.centralManager.state.rawValue)")
-        }
+        // being confirmed against the real adapter.
+        //
+        // NOTE: on this jailbroken device, with the app ad-hoc-signed via
+        // `ldid` (no real Apple certificate chain), CoreBluetooth reports
+        // `isScanning == true` but `didDiscover` never fires — confirmed
+        // with debug logging across entitlement variations (no-sandbox,
+        // platform-application, dev-signing-style), System-app
+        // registration (uicache -s), CBCentralManagerScanOptionAllow
+        // DuplicatesKey, and a full device reboot (rules out a cached
+        // bluetoothd trust decision). The adapter and the device's own
+        // Bluetooth stack are confirmed working (Settings.app and a
+        // separate BLE scanner app both see the adapter). The leading
+        // hypothesis is that bluetoothd performs its own client-signature
+        // trust check — separate from AMFI's launch-time check — that an
+        // `ldid`-only signature (no real cert chain) fails, independent of
+        // entitlements content. A real signing identity (even a free
+        // Apple ID via AltStore/Sideloadly, or Xcode) is the next thing
+        // to try if this surfaces again.
+        centralManager.scanForPeripherals(withServices: nil, options: nil)
     }
 
     func stopScan() {
@@ -165,7 +157,6 @@ final class BLETransport: NSObject, BluetoothTransport {
 
 extension BLETransport: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        debugLog("centralManagerDidUpdateState: \(central.state.rawValue)")
         if central.state != .poweredOn, state.value == .scanning {
             setState(.error("Bluetooth turned off while scanning"))
         }
@@ -173,7 +164,6 @@ extension BLETransport: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                          advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        debugLog("didDiscover: \(peripheral.name ?? "nil") id=\(peripheral.identifier) rssi=\(RSSI)")
         let id = peripheral.identifier.uuidString
         discoveredPeripherals[id] = peripheral
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "Unknown device"
