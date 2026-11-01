@@ -133,21 +133,11 @@ final class DashboardViewController: UIViewController {
             self?.render(snapshot)
         }
 
-        viewModel.tripDistanceKm.observe { [weak self] _ in
-            self?.updateFooter()
+        viewModel.tripComputer.currentTrip.observe { [weak self] trip in
+            self?.footerView.update(distanceKm: trip.distanceKm,
+                                     elapsedSeconds: trip.elapsedSeconds,
+                                     fuelUsedLiters: trip.fuelUsedLiters)
         }
-        viewModel.tripElapsedSeconds.observe { [weak self] _ in
-            self?.updateFooter()
-        }
-        viewModel.tripFuelUsedLiters.observe { [weak self] _ in
-            self?.updateFooter()
-        }
-    }
-
-    private func updateFooter() {
-        footerView.update(distanceKm: viewModel.tripDistanceKm.value,
-                           elapsedSeconds: viewModel.tripElapsedSeconds.value,
-                           fuelUsedLiters: viewModel.tripFuelUsedLiters.value)
     }
 
     private func render(_ snapshot: TelemetrySnapshot) {
@@ -173,29 +163,17 @@ final class DashboardViewController: UIViewController {
         updateFuelConsumptionTiles(with: snapshot)
     }
 
-    /// Lightweight inline preview of the instantaneous/average fuel
-    /// consumption display rules (L/h near zero speed, else L/100km). The
-    /// full Fuel Consumption Engine with ECU-vs-MAF source selection and
-    /// since-reset averaging lands in Phase 4 — this keeps Phase 1 honest
-    /// about being simulator-sourced in the meantime.
     private func updateFuelConsumptionTiles(with snapshot: TelemetrySnapshot) {
-        guard let fuelRate = snapshot.engineFuelRateLitersPerHour,
-              let speed = snapshot.vehicleSpeedKmh?.value else {
+        let profile = SettingsStore.shared.settings.value.vehicleProfile
+        guard let result = FuelConsumptionEngine.compute(snapshot: snapshot, profile: profile) else {
             fuelConsumptionTile.update(text: "--", source: nil)
             return
         }
+        fuelConsumptionTile.update(value: result.value, unit: result.isPer100km ? "L/100km" : "L/h",
+                                    source: result.source, decimals: 1)
 
-        if speed < 3 {
-            fuelConsumptionTile.update(value: fuelRate.value, unit: "L/h", source: fuelRate.source, decimals: 1)
-        } else {
-            let litersPer100km = fuelRate.value * 100.0 / speed
-            fuelConsumptionTile.update(value: litersPer100km, unit: "L/100km", source: fuelRate.source, decimals: 1)
-        }
-
-        let distance = viewModel.tripDistanceKm.value
-        let fuelUsed = viewModel.tripFuelUsedLiters.value
-        if distance > 0.05 {
-            avgFuelConsumptionTile.update(value: fuelUsed * 100.0 / distance, unit: "L/100km", source: .simulated, decimals: 1)
+        if let average = viewModel.tripComputer.sinceReset.value.averageConsumptionPer100km {
+            avgFuelConsumptionTile.update(value: average, unit: "L/100km", source: result.source, decimals: 1)
         } else {
             avgFuelConsumptionTile.update(text: "--", source: nil)
         }

@@ -8,6 +8,11 @@ final class RootTabBarController: UITabBarController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        // One shared telemetry source for the app's lifetime — Trip
+        // Computer must keep accumulating regardless of which tab is
+        // visible, and every screen needs to agree on the same stream.
+        TelemetryHub.shared.start()
+
         tabBar.barStyle = .black
         tabBar.barTintColor = Theme.surface
         tabBar.tintColor = Theme.accent

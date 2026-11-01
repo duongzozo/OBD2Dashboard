@@ -61,27 +61,9 @@ final class BLETransport: NSObject, BluetoothTransport {
         }
     }
 
-    // TEMPORARY diagnostic logging — no Mac/Xcode console available while
-    // debugging why scans return zero results on the real device. Writes
-    // to a plain file so results can be inspected over SSH. Remove once
-    // the root cause is confirmed fixed.
-    private func debugLog(_ message: String) {
-        let line = "\(Date()): \(message)\n"
-        let path = "/var/mobile/Documents/ble_debug.log"
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: path), let handle = FileHandle(forWritingAtPath: path) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            handle.closeFile()
-        } else {
-            try? data.write(to: URL(fileURLWithPath: path))
-        }
-    }
-
     func startScan(onDiscovered: @escaping (DiscoveredPeripheral) -> Void) {
         self.onDiscovered = onDiscovered
         discoveredPeripherals.removeAll()
-        debugLog("startScan called, centralManager.state=\(centralManager.state.rawValue)")
         guard centralManager.state == .poweredOn else {
             setState(.error("Bluetooth is off or unavailable"))
             return
@@ -158,7 +140,6 @@ final class BLETransport: NSObject, BluetoothTransport {
 
 extension BLETransport: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        debugLog("centralManagerDidUpdateState: \(central.state.rawValue)")
         if central.state != .poweredOn, state.value == .scanning {
             setState(.error("Bluetooth turned off while scanning"))
         }
@@ -166,7 +147,6 @@ extension BLETransport: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                          advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        debugLog("didDiscover: \(peripheral.name ?? "nil") id=\(peripheral.identifier) rssi=\(RSSI)")
         let id = peripheral.identifier.uuidString
         discoveredPeripherals[id] = peripheral
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "Unknown device"
