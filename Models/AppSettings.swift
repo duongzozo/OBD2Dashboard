@@ -31,10 +31,14 @@ struct AppSettings: Codable, Equatable {
     var powerSaveModeEnabled: Bool = false
     var demoModeEnabled: Bool = true
 
-    // Phase 2 — Bluetooth adapter configuration. Defaults match the most
-    // common BLE-ELM327-clone UUID set (HM-10/CC2541-style SPP bridge:
-    // service FFF0, notify FFF1, write FFF2) but MUST be overridable here
-    // without a code change once the real adapter's UUIDs are confirmed.
+    // Phase 2 — Bluetooth adapter configuration. Confirmed against the
+    // user's real ELM327 BLE adapter via nRF Connect: service FFF0;
+    // characteristic FFF1 advertises notify + write + write-without-
+    // response; FFF2 advertises write + write-without-response only (no
+    // notify). Since only FFF1 can deliver notifications, it's used as
+    // the notify channel and FFF2 as the dedicated write channel — still
+    // overridable here without a code change if a different adapter needs
+    // different values.
     var bleServiceUUID: String = "FFF0"
     var bleWriteCharacteristicUUID: String = "FFF2"
     var bleNotifyCharacteristicUUID: String = "FFF1"
