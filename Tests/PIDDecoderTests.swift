@@ -2,9 +2,10 @@ import XCTest
 @testable import OBD2Dashboard
 
 final class PIDDecoderTests: XCTestCase {
-    func testEngineRPM() {
+    func testEngineRPM() throws {
         // 41 0C 1A F8 -> RPM = ((0x1A*256)+0xF8)/4 = 1726
-        XCTAssertEqual(PIDDecoder.decode(pid: .engineRPM, bytes: [0x1A, 0xF8]), 1726, accuracy: 0.01)
+        let value = try XCTUnwrap(PIDDecoder.decode(pid: .engineRPM, bytes: [0x1A, 0xF8]))
+        XCTAssertEqual(value, 1726, accuracy: 0.01)
     }
 
     func testVehicleSpeed() {
@@ -16,18 +17,21 @@ final class PIDDecoderTests: XCTestCase {
         XCTAssertEqual(PIDDecoder.decode(pid: .coolantTemp, bytes: [0x7B]), 83)
     }
 
-    func testControlModuleVoltage() {
+    func testControlModuleVoltage() throws {
         // A B -> ((A*256)+B)/1000, e.g. 0x37 0x3A -> (55*256+58)/1000 = 14.138
-        XCTAssertEqual(PIDDecoder.decode(pid: .controlModuleVoltage, bytes: [0x37, 0x3A]), 14.138, accuracy: 0.001)
+        let value = try XCTUnwrap(PIDDecoder.decode(pid: .controlModuleVoltage, bytes: [0x37, 0x3A]))
+        XCTAssertEqual(value, 14.138, accuracy: 0.001)
     }
 
-    func testThrottlePositionFullyOpen() {
-        XCTAssertEqual(PIDDecoder.decode(pid: .throttlePosition, bytes: [0xFF]), 100, accuracy: 0.01)
+    func testThrottlePositionFullyOpen() throws {
+        let value = try XCTUnwrap(PIDDecoder.decode(pid: .throttlePosition, bytes: [0xFF]))
+        XCTAssertEqual(value, 100, accuracy: 0.01)
     }
 
-    func testEngineFuelRate() {
+    func testEngineFuelRate() throws {
         // A B -> ((A*256)+B)/20
-        XCTAssertEqual(PIDDecoder.decode(pid: .engineFuelRate, bytes: [0x00, 0x64]), 5.0, accuracy: 0.001)
+        let value = try XCTUnwrap(PIDDecoder.decode(pid: .engineFuelRate, bytes: [0x00, 0x64]))
+        XCTAssertEqual(value, 5.0, accuracy: 0.001)
     }
 
     func testDecodeReturnsNilWhenNotEnoughBytes() {
