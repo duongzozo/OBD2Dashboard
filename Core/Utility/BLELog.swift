@@ -3,11 +3,11 @@ import Foundation
 /// In-app ring-buffer log for the Bluetooth stack.
 ///
 /// Why this exists rather than plain `print`/`NSLog` alone: the target
-/// device is a jailbroken iPad mini 3 running an AppSync-installed `.ipa`
-/// with no Xcode/debugger attached, so console output is effectively
-/// unreadable in the field. Every entry therefore goes to *both* `NSLog`
-/// (for `idevicesyslog`/Console.app when a Mac happens to be available)
-/// and an observable buffer the Connection screen renders on-device.
+/// device is an iPad mini 3 running a sideloaded `.ipa` with no
+/// Xcode/debugger attached, so console output is effectively unreadable in
+/// the field. Every entry therefore goes to *both* `NSLog` (for
+/// `idevicesyslog`/Console.app when a Mac happens to be available) and an
+/// observable buffer the Connection screen renders on-device.
 ///
 /// `os.Logger` is deliberately not used — it requires iOS 14, and this
 /// project's deployment target is iOS 12.

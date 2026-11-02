@@ -11,10 +11,10 @@ final class ConnectionViewController: UIViewController {
     private let statusPill = StatusPillView()
     private let scanButton = UIButton(type: .system)
     private let copyLogButton = UIButton(type: .system)
-    /// On-device BLE log. The build runs AppSync-installed on a jailbroken
-    /// iPad with no debugger attached, so this panel is the only practical
-    /// way to read `CBManagerState` transitions and `didDiscover` traffic
-    /// while standing at the car.
+    /// On-device BLE log. The build runs sideloaded on an iPad with no
+    /// debugger attached, so this panel is the only practical way to read
+    /// `CBManagerState` transitions and `didDiscover` traffic while
+    /// standing at the car.
     private let logTextView = UITextView()
     private var devices: [DiscoveredPeripheral] = []
 
