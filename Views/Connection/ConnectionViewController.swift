@@ -10,6 +10,12 @@ final class ConnectionViewController: UIViewController {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let statusPill = StatusPillView()
     private let scanButton = UIButton(type: .system)
+    private let copyLogButton = UIButton(type: .system)
+    /// On-device BLE log. The build runs AppSync-installed on a jailbroken
+    /// iPad with no debugger attached, so this panel is the only practical
+    /// way to read `CBManagerState` transitions and `didDiscover` traffic
+    /// while standing at the car.
+    private let logTextView = UITextView()
     private var devices: [DiscoveredPeripheral] = []
 
     init(bluetoothManager: BluetoothManager) {
@@ -38,29 +44,51 @@ final class ConnectionViewController: UIViewController {
         scanButton.translatesAutoresizingMaskIntoConstraints = false
         scanButton.addTarget(self, action: #selector(scanTapped), for: .touchUpInside)
 
+        copyLogButton.setTitle("Copy Log", for: .normal)
+        copyLogButton.setTitleColor(Theme.textSecondary, for: .normal)
+        copyLogButton.titleLabel?.font = Theme.labelFont(size: 13, weight: .regular)
+        copyLogButton.translatesAutoresizingMaskIntoConstraints = false
+        copyLogButton.addTarget(self, action: #selector(copyLogTapped), for: .touchUpInside)
+
         tableView.backgroundColor = .clear
         tableView.separatorColor = Theme.hairline
         tableView.dataSource = self
         tableView.delegate = self
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
-        let topRow = UIStackView(arrangedSubviews: [scanButton, statusPill])
+        logTextView.isEditable = false
+        logTextView.backgroundColor = Theme.surface
+        logTextView.textColor = Theme.textSecondary
+        logTextView.font = UIFont(name: "Menlo", size: 10) ?? UIFont.systemFont(ofSize: 10)
+        logTextView.layer.cornerRadius = 8
+        logTextView.translatesAutoresizingMaskIntoConstraints = false
+
+        let topRow = UIStackView(arrangedSubviews: [scanButton, statusPill, copyLogButton])
         topRow.axis = .horizontal
         topRow.spacing = 16
         topRow.alignment = .center
         topRow.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topRow)
         view.addSubview(tableView)
+        view.addSubview(logTextView)
 
         NSLayoutConstraint.activate([
             topRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             topRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             topRow.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
 
+            // Device list on the left, live BLE log on the right — the
+            // screen is landscape-locked, so a side-by-side split keeps
+            // both readable without scrolling between them.
             tableView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+            tableView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.38),
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+
+            logTextView.topAnchor.constraint(equalTo: tableView.topAnchor),
+            logTextView.leadingAnchor.constraint(equalTo: tableView.trailingAnchor, constant: 16),
+            logTextView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            logTextView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
         ])
     }
 
@@ -72,10 +100,29 @@ final class ConnectionViewController: UIViewController {
             self?.devices = devices
             self?.tableView.reloadData()
         }
+        BLELog.shared.entries.observe { [weak self] entries in
+            self?.renderLog(entries)
+        }
+    }
+
+    private func renderLog(_ entries: [String]) {
+        logTextView.text = entries.joined(separator: "\n")
+        // Keep the newest line visible — during a scan the interesting
+        // entry is always the one that just arrived.
+        let end = NSRange(location: (logTextView.text as NSString).length, length: 0)
+        logTextView.scrollRangeToVisible(end)
     }
 
     @objc private func scanTapped() {
         bluetoothManager.scan()
+    }
+
+    @objc private func copyLogTapped() {
+        UIPasteboard.general.string = BLELog.shared.plainText
+        copyLogButton.setTitle("Copied", for: .normal)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copyLogButton.setTitle("Copy Log", for: .normal)
+        }
     }
 }
 

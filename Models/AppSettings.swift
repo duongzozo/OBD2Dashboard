@@ -32,13 +32,22 @@ struct AppSettings: Codable, Equatable {
     var demoModeEnabled: Bool = true
 
     // Phase 2 — Bluetooth adapter configuration. Confirmed against the
-    // user's real ELM327 BLE adapter via nRF Connect: service FFF0;
+    // user's real ELM327 BLE adapter with LightBlue: service FFF0;
     // characteristic FFF1 advertises notify + write + write-without-
     // response; FFF2 advertises write + write-without-response only (no
     // notify). Since only FFF1 can deliver notifications, it's used as
     // the notify channel and FFF2 as the dedicated write channel — still
     // overridable here without a code change if a different adapter needs
     // different values.
+    //
+    // IMPORTANT caveat for anyone debugging the empty-scan problem: that
+    // LightBlue session ran on a *different* device, not the target iPad
+    // mini 3. It therefore proves the adapter is genuine BLE — ruling out
+    // the "it's actually Classic SPP, invisible to CoreBluetooth" theory —
+    // but proves nothing about whether CoreBluetooth works on the iPad
+    // itself. Do not read it as "the device's Bluetooth stack is confirmed
+    // working": as of this writing, no BLE app of any kind has been shown
+    // to discover anything on that iPad.
     var bleServiceUUID: String = "FFF0"
     var bleWriteCharacteristicUUID: String = "FFF2"
     var bleNotifyCharacteristicUUID: String = "FFF1"

@@ -26,86 +26,178 @@ struct BLEAdapterConfig {
 /// Classic Bluetooth SPP adapters are explicitly out of scope here: per
 /// spec §2, SPP is not reachable via CoreBluetooth at all and would need a
 /// separate ExternalAccessory/MFi-backed `BluetoothTransport` conformer.
+/// This is also why Settings.app listing a speaker or TV says nothing
+/// about this code path — those are Classic devices and CoreBluetooth is
+/// *supposed* to be blind to them.
 ///
-/// CoreBluetooth delegate callbacks fire on the dispatch queue given to
-/// `CBCentralManager` below — a background queue, per spec §11 ("Xử lý
-/// Bluetooth trên background queue"). Every `state`/`onDiscovered` update
-/// that the UI observes is explicitly hopped back to the main queue here
-/// ("Cập nhật UI trên main thread"); the connect-timeout `Timer` is always
-/// created/invalidated on the main run loop for the same reason — `Timer`
-/// isn't safe to invalidate from a thread other than the one that
-/// scheduled it.
+/// CoreBluetooth delegate callbacks fire on `bleQueue` (a background
+/// queue, per spec §11 "Xử lý Bluetooth trên background queue"). All
+/// mutable state below — `discoveredPeripherals`, `targetPeripheral`,
+/// `scanPending`, `transportState` — is confined to that queue, and the
+/// public `startScan`/`stopScan`/`connect`/`disconnect`/`send` entry
+/// points hop onto it rather than touching that state from the caller's
+/// thread. Every `state`/`onDiscovered` update the UI observes is hopped
+/// back to main ("Cập nhật UI trên main thread"); the connect-timeout
+/// `Timer` is always created/invalidated on the main run loop for the same
+/// reason — `Timer` isn't safe to invalidate from a thread other than the
+/// one that scheduled it.
 final class BLETransport: NSObject, BluetoothTransport {
     let state = Observable<ConnectionState>(.disconnected)
     var onDataReceived: ((Data) -> Void)?
 
     private let config: BLEAdapterConfig
+    private let bleQueue = DispatchQueue(label: "com.diy.obd2dashboard.ble")
     private var centralManager: CBCentralManager!
+
+    // MARK: - bleQueue-confined state
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
     private var targetPeripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?
     private var onDiscovered: ((DiscoveredPeripheral) -> Void)?
-    private var connectTimeoutTimer: Timer?
     private var hasRetriedConnect = false
+    /// A scan was asked for while the central was not yet `.poweredOn`.
+    /// Without this, a scan requested during the ~0.1–1s the central takes
+    /// to settle after launch was dropped on the floor permanently: the
+    /// previous code reported an error and `centralManagerDidUpdateState`
+    /// never restarted anything. `autoReconnectIfEnabled()` lands inside
+    /// exactly that window on every cold start.
+    private var scanPending = false
+    /// Mirror of `state.value` readable from `bleQueue` without racing the
+    /// main-queue writes made in `setState`.
+    private var transportState: ConnectionState = .disconnected
+    /// Bumped whenever a scan starts or stops, so stale heartbeats from a
+    /// previous scan silently expire instead of logging forever.
+    private var scanGeneration = 0
+
+    private var connectTimeoutTimer: Timer?
 
     init(config: BLEAdapterConfig) {
         self.config = config
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: DispatchQueue(label: "com.diy.obd2dashboard.ble"))
+        BLELog.shared.log("BLETransport init — service=\(config.serviceUUID) write=\(config.writeCharacteristicUUID) notify=\(config.notifyCharacteristicUUID)")
+        centralManager = CBCentralManager(delegate: self, queue: bleQueue)
+        BLELog.shared.log("CBCentralManager created, initial state=\(BLETransport.describe(centralManager.state))")
     }
 
+    /// Human-readable `CBManagerState`. This is the single most diagnostic
+    /// value in the whole flow: `.unauthorized`/`.unsupported` points at
+    /// the app's signature or the platform, `.poweredOff` at the user, and
+    /// `.poweredOn` with zero discoveries points at the adapter or at the
+    /// scan itself rather than at permissions.
+    private static func describe(_ state: CBManagerState) -> String {
+        switch state {
+        case .unknown: return "unknown (not yet determined)"
+        case .resetting: return "resetting"
+        case .unsupported: return "unsupported (no BLE hardware/stack)"
+        case .unauthorized: return "unauthorized (app denied BLE access)"
+        case .poweredOff: return "poweredOff"
+        case .poweredOn: return "poweredOn"
+        @unknown default: return "unrecognised(\(state.rawValue))"
+        }
+    }
+
+    /// Must run on `bleQueue`.
     private func setState(_ newState: ConnectionState) {
+        transportState = newState
+        BLELog.shared.log("state -> \(newState.shortLabel)")
         DispatchQueue.main.async { [weak self] in
             self?.state.value = newState
         }
     }
 
+    // MARK: - Scanning
+
     func startScan(onDiscovered: @escaping (DiscoveredPeripheral) -> Void) {
-        self.onDiscovered = onDiscovered
-        discoveredPeripherals.removeAll()
-        guard centralManager.state == .poweredOn else {
-            setState(.error("Bluetooth is off or unavailable"))
+        bleQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.onDiscovered = onDiscovered
+            self.discoveredPeripherals.removeAll()
+            self.scanPending = true
+            self.startScanIfPowered(trigger: "startScan()")
+        }
+    }
+
+    /// Must run on `bleQueue`.
+    private func startScanIfPowered(trigger: String) {
+        let central = centralManager.state
+        BLELog.shared.log("scan requested by \(trigger) — central.state=\(BLETransport.describe(central))")
+
+        guard central == .poweredOn else {
+            switch central {
+            case .unknown, .resetting:
+                // Not an error — the central simply hasn't settled yet.
+                // `scanPending` stays set so `centralManagerDidUpdateState`
+                // starts the scan the moment it powers on.
+                BLELog.shared.log("central not settled yet — scan deferred until poweredOn")
+                setState(.scanning)
+            default:
+                scanPending = false
+                setState(.error("Bluetooth unavailable: \(BLETransport.describe(central))"))
+            }
             return
         }
+
+        scanPending = false
         setState(.scanning)
         // Unfiltered scan so the Connection screen can list any nearby BLE
         // device by name — useful while the exact service UUID is still
         // being confirmed against the real adapter.
-        //
-        // NOTE: on this jailbroken device, with the app ad-hoc-signed via
-        // `ldid` (no real Apple certificate chain), CoreBluetooth reports
-        // `isScanning == true` but `didDiscover` never fires — confirmed
-        // with debug logging across entitlement variations (no-sandbox,
-        // platform-application, dev-signing-style), System-app
-        // registration (uicache -s), CBCentralManagerScanOptionAllow
-        // DuplicatesKey, and a full device reboot (rules out a cached
-        // bluetoothd trust decision). The adapter and the device's own
-        // Bluetooth stack are confirmed working (Settings.app and a
-        // separate BLE scanner app both see the adapter). The leading
-        // hypothesis is that bluetoothd performs its own client-signature
-        // trust check — separate from AMFI's launch-time check — that an
-        // `ldid`-only signature (no real cert chain) fails, independent of
-        // entitlements content. A real signing identity (even a free
-        // Apple ID via AltStore/Sideloadly, or Xcode) is the next thing
-        // to try if this surfaces again.
         centralManager.scanForPeripherals(withServices: nil, options: nil)
+        BLELog.shared.log("scanForPeripherals(withServices: nil) called — isScanning=\(centralManager.isScanning)")
+
+        scanGeneration += 1
+        scheduleScanHeartbeat(generation: scanGeneration, elapsed: 0)
+    }
+
+    /// Logs scan progress every 5s for the first 30s.
+    ///
+    /// This is what separates two failure modes that look identical in the
+    /// UI. "isScanning=true, discovered=0, t+30s" means the scan really is
+    /// running and nothing is answering it — adapter is Classic-SPP, out of
+    /// range, asleep, or already bonded to another phone. `isScanning`
+    /// flipping to false on its own instead means something tore the scan
+    /// down underneath us.
+    private func scheduleScanHeartbeat(generation: Int, elapsed: Int) {
+        guard elapsed < 30 else { return }
+        bleQueue.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self, self.scanGeneration == generation else { return }
+            let next = elapsed + 5
+            BLELog.shared.log("scan heartbeat t+\(next)s — isScanning=\(self.centralManager.isScanning) discovered=\(self.discoveredPeripherals.count) central.state=\(BLETransport.describe(self.centralManager.state))")
+            self.scheduleScanHeartbeat(generation: generation, elapsed: next)
+        }
     }
 
     func stopScan() {
-        centralManager.stopScan()
+        bleQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.scanPending = false
+            self.scanGeneration += 1 // expires any pending heartbeat
+            self.centralManager.stopScan()
+            BLELog.shared.log("stopScan() — \(self.discoveredPeripherals.count) device(s) discovered this scan")
+        }
     }
+
+    // MARK: - Connecting
 
     func connect(to peripheralID: String) {
-        guard let peripheral = discoveredPeripherals[peripheralID] else {
-            setState(.error("Unknown peripheral — scan again"))
-            return
+        bleQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard let peripheral = self.discoveredPeripherals[peripheralID] else {
+                BLELog.shared.log("connect(to: \(peripheralID)) failed — not in discovered set (have \(self.discoveredPeripherals.count))")
+                self.setState(.error("Unknown peripheral — scan again"))
+                return
+            }
+            self.scanPending = false
+            self.scanGeneration += 1
+            self.centralManager.stopScan()
+            self.hasRetriedConnect = false
+            BLELog.shared.log("connect(to: \(peripheralID)) — name=\(peripheral.name ?? "nil")")
+            self.attemptConnect(peripheral)
         }
-        stopScan()
-        hasRetriedConnect = false
-        attemptConnect(peripheral)
     }
 
+    /// Must run on `bleQueue`.
     private func attemptConnect(_ peripheral: CBPeripheral) {
         targetPeripheral = peripheral
         setState(.connecting)
@@ -115,7 +207,7 @@ final class BLETransport: NSObject, BluetoothTransport {
             guard let self = self else { return }
             self.connectTimeoutTimer?.invalidate()
             self.connectTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self] _ in
-                self?.handleConnectTimeout()
+                self?.bleQueue.async { self?.handleConnectTimeout() }
             }
         }
     }
@@ -127,8 +219,10 @@ final class BLETransport: NSObject, BluetoothTransport {
         }
     }
 
+    /// Must run on `bleQueue`.
     private func handleConnectTimeout() {
         guard let peripheral = targetPeripheral else { return }
+        BLELog.shared.log("connect timed out after 8s (alreadyRetried=\(hasRetriedConnect))")
         centralManager.cancelPeripheralConnection(peripheral)
         if !hasRetriedConnect {
             hasRetriedConnect = true
@@ -140,24 +234,44 @@ final class BLETransport: NSObject, BluetoothTransport {
 
     func disconnect() {
         invalidateConnectTimer()
-        if let peripheral = targetPeripheral {
-            centralManager.cancelPeripheralConnection(peripheral)
+        bleQueue.async { [weak self] in
+            guard let self = self else { return }
+            BLELog.shared.log("disconnect() requested")
+            if let peripheral = self.targetPeripheral {
+                self.centralManager.cancelPeripheralConnection(peripheral)
+            }
+            self.targetPeripheral = nil
+            self.writeCharacteristic = nil
+            self.notifyCharacteristic = nil
+            self.setState(.disconnected)
         }
-        targetPeripheral = nil
-        writeCharacteristic = nil
-        notifyCharacteristic = nil
-        setState(.disconnected)
     }
 
     func send(_ data: Data) {
-        guard let peripheral = targetPeripheral, let characteristic = writeCharacteristic else { return }
-        peripheral.writeValue(data, for: characteristic, type: config.writeType)
+        bleQueue.async { [weak self] in
+            guard let self = self,
+                  let peripheral = self.targetPeripheral,
+                  let characteristic = self.writeCharacteristic else { return }
+            peripheral.writeValue(data, for: characteristic, type: self.config.writeType)
+        }
     }
 }
 
 extension BLETransport: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state != .poweredOn, state.value == .scanning {
+        BLELog.shared.log("centralManagerDidUpdateState -> \(BLETransport.describe(central.state))")
+
+        if central.state == .poweredOn {
+            // Covers both the cold-start race (a scan was requested before
+            // the central settled) and Bluetooth being toggled back on
+            // mid-session.
+            if scanPending {
+                startScanIfPowered(trigger: "deferred scan after poweredOn")
+            }
+            return
+        }
+
+        if transportState == .scanning {
             setState(.error("Bluetooth turned off while scanning"))
         }
     }
@@ -165,8 +279,21 @@ extension BLETransport: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                          advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let id = peripheral.identifier.uuidString
+        let isNew = discoveredPeripherals[id] == nil
         discoveredPeripherals[id] = peripheral
-        let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "Unknown device"
+
+        let localName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let name = peripheral.name ?? localName ?? "Unknown device"
+
+        if isNew {
+            // Advertised service UUIDs are logged because they settle the
+            // "is my configured service UUID right?" question before a
+            // connection is ever attempted.
+            let advertisedServices = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?
+                .map { $0.uuidString }.joined(separator: ",") ?? "none"
+            BLELog.shared.log("didDiscover #\(discoveredPeripherals.count): name=\(name) rssi=\(RSSI) services=[\(advertisedServices)] id=\(id)")
+        }
+
         let device = DiscoveredPeripheral(id: id, name: name, signalStrength: RSSI.intValue)
         let callback = onDiscovered
         DispatchQueue.main.async {
@@ -176,18 +303,21 @@ extension BLETransport: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         invalidateConnectTimer()
+        BLELog.shared.log("didConnect \(peripheral.name ?? "unnamed") — discovering services")
         peripheral.delegate = self
         peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         invalidateConnectTimer()
+        BLELog.shared.log("didFailToConnect: \(error?.localizedDescription ?? "unknown error")")
         setState(.error("Failed to connect: \(error?.localizedDescription ?? "unknown error")"))
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         writeCharacteristic = nil
         notifyCharacteristic = nil
+        BLELog.shared.log("didDisconnectPeripheral: \(error?.localizedDescription ?? "clean disconnect")")
         if let error = error {
             setState(.error("Disconnected: \(error.localizedDescription)"))
         } else {
@@ -199,9 +329,11 @@ extension BLETransport: CBCentralManagerDelegate {
 extension BLETransport: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else {
+            BLELog.shared.log("didDiscoverServices: none (error=\(error?.localizedDescription ?? "nil"))")
             setState(.error("No services found on adapter"))
             return
         }
+        BLELog.shared.log("didDiscoverServices: [\(services.map { $0.uuid.uuidString }.joined(separator: ","))]")
         guard let targetService = services.first(where: { $0.uuid == config.serviceUUID }) else {
             setState(.error("Configured service UUID \(config.serviceUUID) not found on this device — check Settings against your adapter's real UUID"))
             return
@@ -211,9 +343,12 @@ extension BLETransport: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let characteristics = service.characteristics else {
+            BLELog.shared.log("didDiscoverCharacteristicsFor \(service.uuid): none (error=\(error?.localizedDescription ?? "nil"))")
             setState(.error("No characteristics found for configured service"))
             return
         }
+        BLELog.shared.log("didDiscoverCharacteristicsFor \(service.uuid): [\(characteristics.map { $0.uuid.uuidString }.joined(separator: ","))]")
+
         writeCharacteristic = characteristics.first(where: { $0.uuid == config.writeCharacteristicUUID })
         notifyCharacteristic = characteristics.first(where: { $0.uuid == config.notifyCharacteristicUUID })
 
@@ -236,6 +371,7 @@ extension BLETransport: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
+            BLELog.shared.log("didWriteValueFor \(characteristic.uuid) failed: \(error.localizedDescription)")
             setState(.error("Write failed: \(error.localizedDescription)"))
         }
     }

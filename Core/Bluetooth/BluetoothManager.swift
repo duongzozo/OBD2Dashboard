@@ -28,7 +28,11 @@ final class BluetoothManager {
     }
 
     func scan() {
-        guard connectionState.value != .connected, connectionState.value != .ecuReady else { return }
+        guard connectionState.value != .connected, connectionState.value != .ecuReady else {
+            BLELog.shared.log("scan() ignored — already \(connectionState.value.shortLabel)")
+            return
+        }
+        BLELog.shared.log("scan() requested")
         discoveredDevices.value = []
         transport.startScan { [weak self] device in
             guard let self = self else { return }
@@ -59,11 +63,16 @@ final class BluetoothManager {
     /// requiring the user to scan again every time, if enabled in Settings.
     func autoReconnectIfEnabled() {
         guard settingsStore.settings.value.autoReconnectEnabled,
-              let lastID = UserDefaults.standard.string(forKey: lastConnectedKey) else { return }
+              let lastID = UserDefaults.standard.string(forKey: lastConnectedKey) else {
+            BLELog.shared.log("autoReconnect skipped — disabled or no previous peripheral stored")
+            return
+        }
+        BLELog.shared.log("autoReconnect: scanning for previously used peripheral \(lastID)")
         scan()
         // Give the scan a moment to re-discover the previously paired
         // device by ID before attempting to connect to it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            BLELog.shared.log("autoReconnect: attempting connect to \(lastID)")
             self?.connect(to: lastID)
         }
     }
