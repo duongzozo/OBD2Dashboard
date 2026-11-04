@@ -17,8 +17,8 @@ struct DTCEntry: Equatable {
 final class DiagnosticEngine {
     private let queue: OBDRequestQueue
 
-    init(bluetoothManager: BluetoothManager) {
-        self.queue = OBDRequestQueue(transport: bluetoothManager.transport)
+    init(queue: OBDRequestQueue = .shared) {
+        self.queue = queue
     }
 
     func scanStored(completion: @escaping ([DTCEntry]) -> Void) {

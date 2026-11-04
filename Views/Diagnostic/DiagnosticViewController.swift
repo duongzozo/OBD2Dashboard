@@ -6,7 +6,7 @@ import UIKit
 /// automatically, and never claims a fault is "fixed" just because its
 /// code disappeared after clearing.
 final class DiagnosticViewController: UIViewController {
-    private lazy var engine = DiagnosticEngine(bluetoothManager: .shared)
+    private lazy var engine = DiagnosticEngine()
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var entries: [DTCEntry] = []
 

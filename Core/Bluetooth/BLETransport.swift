@@ -54,6 +54,8 @@ final class BLETransport: NSObject, BluetoothTransport {
     private var targetPeripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?
+    /// The write type the adapter actually supports, set during discovery.
+    private var writeType: CBCharacteristicWriteType = .withoutResponse
     private var onDiscovered: ((DiscoveredPeripheral) -> Void)?
     private var hasRetriedConnect = false
     /// A scan was asked for while the central was not yet `.poweredOn`.
@@ -100,7 +102,11 @@ final class BLETransport: NSObject, BluetoothTransport {
     /// Must run on `bleQueue`.
     private func setState(_ newState: ConnectionState) {
         transportState = newState
-        BLELog.shared.log("state -> \(newState.shortLabel)")
+        if case .error(let message) = newState {
+            BLELog.shared.log("state -> ERROR: \(message)")
+        } else {
+            BLELog.shared.log("state -> \(newState.shortLabel)")
+        }
         DispatchQueue.main.async { [weak self] in
             self?.state.value = newState
         }
@@ -252,7 +258,7 @@ final class BLETransport: NSObject, BluetoothTransport {
             guard let self = self,
                   let peripheral = self.targetPeripheral,
                   let characteristic = self.writeCharacteristic else { return }
-            peripheral.writeValue(data, for: characteristic, type: self.config.writeType)
+            peripheral.writeValue(data, for: characteristic, type: self.writeType)
         }
     }
 }
@@ -356,11 +362,48 @@ extension BLETransport: CBPeripheralDelegate {
             setState(.error("Configured notify characteristic UUID not found — check Settings"))
             return
         }
-        guard writeCharacteristic != nil else {
+        guard let writeCharacteristic = writeCharacteristic else {
             setState(.error("Configured write characteristic UUID not found — check Settings"))
             return
         }
+        guard let resolvedWriteType = BLETransport.resolveWriteType(preferred: config.writeType, properties: writeCharacteristic.properties) else {
+            setState(.error("Configured write characteristic \(writeCharacteristic.uuid) is not writable — check Settings"))
+            return
+        }
+        writeType = resolvedWriteType
+        BLELog.shared.log("write=\(writeCharacteristic.uuid) properties=\(writeCharacteristic.properties.rawValue) using \(resolvedWriteType == .withResponse ? "withResponse" : "withoutResponse"); notify=\(notifyCharacteristic.uuid) properties=\(notifyCharacteristic.properties.rawValue)")
+
+        // `.connected` starts the ELM327 init, so it waits for the adapter to
+        // confirm notifications are on — a reply sent before that would be lost.
         peripheral.setNotifyValue(true, for: notifyCharacteristic)
+    }
+
+    /// Honours the configured write type when the adapter supports it. A write
+    /// of a type the characteristic does not offer may never reach the adapter.
+    static func resolveWriteType(preferred: CBCharacteristicWriteType,
+                                 properties: CBCharacteristicProperties) -> CBCharacteristicWriteType? {
+        let canWrite = properties.contains(.write)
+        let canWriteWithoutResponse = properties.contains(.writeWithoutResponse)
+        switch preferred {
+        case .withResponse where canWrite: return .withResponse
+        case .withoutResponse where canWriteWithoutResponse: return .withoutResponse
+        default:
+            if canWrite { return .withResponse }
+            return canWriteWithoutResponse ? .withoutResponse : nil
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == config.notifyCharacteristicUUID else { return }
+        if let error = error {
+            setState(.error("Could not enable notifications on \(characteristic.uuid): \(error.localizedDescription)"))
+            return
+        }
+        BLELog.shared.log("notifications on \(characteristic.uuid): isNotifying=\(characteristic.isNotifying)")
+        guard characteristic.isNotifying else {
+            setState(.error("Adapter did not enable notifications on \(characteristic.uuid)"))
+            return
+        }
         setState(.connected)
     }
 

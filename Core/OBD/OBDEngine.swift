@@ -17,7 +17,14 @@ final class OBDEngine {
     private var fastTimer: Timer?
     private var slowTimer: Timer?
     private var latestSnapshot = TelemetrySnapshot.empty
+    /// Bumped by `stop()`, so an init result from an old link is ignored.
+    private var sessionGeneration = 0
+    /// Last logged result per PID. Only changes are logged, which keeps the
+    /// log readable while polling several times a second.
+    private var lastPollOutcome: [OBDPID: String] = [:]
 
+    private static let maxInitAttempts = 2
+    private static let initRetryDelay: TimeInterval = 1.0
     private static let fastPIDs: [OBDPID] = [.vehicleSpeed, .engineRPM, .throttlePosition]
     private static let slowPIDs: [OBDPID] = [
         .coolantTemp, .controlModuleVoltage, .fuelTankLevel, .engineFuelRate,
@@ -25,15 +32,15 @@ final class OBDEngine {
         .shortFuelTrim1, .longFuelTrim1, .timingAdvance, .engineLoad, .oxygenSensor1
     ]
 
-    init(bluetoothManager: BluetoothManager) {
+    init(bluetoothManager: BluetoothManager, queue: OBDRequestQueue = .shared) {
         self.bluetoothManager = bluetoothManager
-        self.queue = OBDRequestQueue(transport: bluetoothManager.transport)
+        self.queue = queue
         self.initializer = ELM327Initializer(queue: queue)
 
         bluetoothManager.connectionState.observe { [weak self] state in
             switch state {
             case .connected:
-                self?.beginInitialization()
+                self?.beginInitialization(attempt: 1)
             case .disconnected, .error:
                 self?.stop()
                 self?.ecuState.value = .disconnected
@@ -44,25 +51,48 @@ final class OBDEngine {
     }
 
     func stop() {
+        sessionGeneration += 1
         fastTimer?.invalidate()
         fastTimer = nil
         slowTimer?.invalidate()
         slowTimer = nil
+        queue.reset()
     }
 
-    private func beginInitialization() {
+    private func beginInitialization(attempt: Int) {
+        let generation = sessionGeneration
         ecuState.value = .initializing
+        lastPollOutcome = [:]
+        queue.setTrafficLogging(true)
+        BLELog.shared.log("ELM327 init attempt \(attempt)/\(Self.maxInitAttempts)")
+
         initializer.initialize { [weak self] result in
             DispatchQueue.main.async {
+                guard let self = self, self.sessionGeneration == generation else { return }
+                self.queue.setTrafficLogging(false)
                 switch result {
                 case .success(let supported):
-                    self?.supportedPIDs = supported
-                    self?.ecuState.value = .ecuReady
-                    self?.startPolling()
+                    let names = supported.map { $0.hexString }.sorted().joined(separator: ",")
+                    BLELog.shared.log("ELM327 ready, supported PIDs: [\(names)]")
+                    self.supportedPIDs = supported
+                    self.ecuState.value = .ecuReady
+                    self.startPolling()
                 case .failure(let error):
-                    self?.ecuState.value = .error("ELM327 init failed: \(error)")
+                    BLELog.shared.log("ELM327 init failed: \(error)")
+                    self.retryOrFail(after: attempt, error: error, generation: generation)
                 }
             }
+        }
+    }
+
+    private func retryOrFail(after attempt: Int, error: ELM327Initializer.InitError, generation: Int) {
+        guard attempt < Self.maxInitAttempts else {
+            ecuState.value = .error("ELM327 init failed: \(error)")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.initRetryDelay) { [weak self] in
+            guard let self = self, self.sessionGeneration == generation else { return }
+            self.beginInitialization(attempt: attempt + 1)
         }
     }
 
@@ -92,14 +122,34 @@ final class OBDEngine {
 
     private func poll(_ pid: OBDPID) {
         let timeoutMs = SettingsStore.shared.settings.value.obdRequestTimeoutMs
-        queue.enqueue("01" + pid.hexString, timeoutMs: timeoutMs) { [weak self] result in
-            guard let self = self, case .success(let response) = result else { return }
-            guard let dataBytes = try? OBDResponseParser.mode01DataBytes(fromResponse: response, expectedPID: pid),
-                  let value = PIDDecoder.decode(pid: pid, bytes: dataBytes) else { return }
+        queue.enqueueIfNotQueued("01" + pid.hexString, timeoutMs: timeoutMs) { [weak self] result in
             DispatchQueue.main.async {
-                self.apply(pid: pid, value: value)
+                self?.handlePollResult(result, for: pid)
             }
         }
+    }
+
+    private func handlePollResult(_ result: Result<String, OBDRequestQueue.RequestError>, for pid: OBDPID) {
+        do {
+            let response = try result.get()
+            let bytes = try OBDResponseParser.mode01DataBytes(fromResponse: response, expectedPID: pid)
+            guard let value = PIDDecoder.decode(pid: pid, bytes: bytes) else {
+                recordPollOutcome("undecodable reply \(OBDResponseParser.printable(response))", for: pid)
+                return
+            }
+            recordPollOutcome("ok", for: pid)
+            apply(pid: pid, value: value)
+        } catch OBDRequestQueue.RequestError.cancelled {
+            return
+        } catch {
+            recordPollOutcome("\(error)", for: pid)
+        }
+    }
+
+    private func recordPollOutcome(_ outcome: String, for pid: OBDPID) {
+        guard lastPollOutcome[pid] != outcome else { return }
+        lastPollOutcome[pid] = outcome
+        BLELog.shared.log("PID \(pid.hexString) (\(pid.displayName)): \(outcome)")
     }
 
     private func apply(pid: OBDPID, value: Double) {

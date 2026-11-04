@@ -33,6 +33,49 @@ final class OBDResponseParserTests: XCTestCase {
         XCTAssertEqual(bytes, [0xBE, 0x3E, 0xB8, 0x11])
     }
 
+    // A real adapter answers without spaces after `ATS0`.
+    func testMode01DataBytesWithoutSpaces() throws {
+        let bytes = try OBDResponseParser.mode01DataBytes(fromResponse: "410C1AF8\r\r>", expectedPID: .engineRPM)
+        XCTAssertEqual(bytes, [0x1A, 0xF8])
+    }
+
+    func testSupportedPIDBitmapBytesWithoutSpacesAfterSearching() throws {
+        let raw = "SEARCHING...\r4100BE3EB811\r\r>"
+        let bytes = try OBDResponseParser.supportedPIDBitmapBytes(fromResponse: raw, queryPID: 0x00)
+        XCTAssertEqual(bytes, [0xBE, 0x3E, 0xB8, 0x11])
+    }
+
+    func testSupportedPIDBitmapBytesSearchingOnSameLine() throws {
+        let raw = "SEARCHING...4100BE3EB811\r\r>"
+        let bytes = try OBDResponseParser.supportedPIDBitmapBytes(fromResponse: raw, queryPID: 0x00)
+        XCTAssertEqual(bytes, [0xBE, 0x3E, 0xB8, 0x11])
+    }
+
+    func testSupportedPIDBitmapBytesMergesEveryECU() throws {
+        let raw = "4100BE3E0000\r410000008001\r\r>"
+        let bytes = try OBDResponseParser.supportedPIDBitmapBytes(fromResponse: raw, queryPID: 0x00)
+        XCTAssertEqual(bytes, [0xBE, 0x3E, 0x80, 0x01])
+    }
+
+    func testMode01DataBytesFindsExpectedPIDAmongSeveralLines() throws {
+        let raw = "410D5A\r410C1AF8\r\r>"
+        let bytes = try OBDResponseParser.mode01DataBytes(fromResponse: raw, expectedPID: .engineRPM)
+        XCTAssertEqual(bytes, [0x1A, 0xF8])
+    }
+
+    func testSupportedPIDBitmapBytesThrowsUnableToConnect() {
+        XCTAssertThrowsError(try OBDResponseParser.supportedPIDBitmapBytes(fromResponse: "SEARCHING...\rUNABLE TO CONNECT\r\r>", queryPID: 0x00)) { error in
+            XCTAssertEqual(error as? OBDResponseError, .unableToConnect)
+        }
+    }
+
+    func testHexBytesRejectsOddLengthAndNonHex() {
+        XCTAssertNil(OBDResponseParser.hexBytes(fromLine: "410"))
+        XCTAssertNil(OBDResponseParser.hexBytes(fromLine: "OK"))
+        XCTAssertNil(OBDResponseParser.hexBytes(fromLine: "+F"))
+        XCTAssertNil(OBDResponseParser.hexBytes(fromLine: ""))
+    }
+
     func testExtractResponseLineIgnoresBlankAndPrompt() {
         let line = OBDResponseParser.extractResponseLine(from: "\r\n41 05 7B\r\n>\r\n")
         XCTAssertEqual(line, "41 05 7B")
