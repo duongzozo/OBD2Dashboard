@@ -2,8 +2,8 @@ import UIKit
 
 /// A small reusable parameter card for the dashboard's parameter grid
 /// (coolant, voltage, fuel consumption, engine load, etc). Shows a label,
-/// a large value, a unit, and a data-source badge so simulated/estimated
-/// values are never confused with real ECU readings.
+/// a large value, a unit, and a data-source badge so calculated/estimated
+/// values are never confused with direct ECU readings.
 final class ParameterTileView: UIView {
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
@@ -12,6 +12,8 @@ final class ParameterTileView: UIView {
 
     var dangerThreshold: Double?
     var warningThreshold: Double?
+    /// For values that are also dangerous when too low, such as battery voltage.
+    var lowDangerThreshold: Double?
 
     init(title: String) {
         super.init(frame: .zero)
@@ -76,7 +78,9 @@ final class ParameterTileView: UIView {
         unitLabel.text = unit
         sourceBadge.text = source?.displayLabel
 
-        if let value = value, let danger = dangerThreshold, value >= danger {
+        if let value = value, let low = lowDangerThreshold, value <= low {
+            valueLabel.textColor = Theme.danger
+        } else if let value = value, let danger = dangerThreshold, value >= danger {
             valueLabel.textColor = Theme.danger
         } else if let value = value, let warn = warningThreshold, value >= warn {
             valueLabel.textColor = Theme.warning

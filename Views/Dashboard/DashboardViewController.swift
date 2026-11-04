@@ -1,9 +1,8 @@
 import UIKit
 
 /// Main cockpit screen: header, center speedometer/tachometer, parameter
-/// grid, and footer trip summary. Phase 1 wires this to `OBDSimulator` via
-/// `DashboardViewModel`; later phases swap the view model's data source to
-/// a real `OBDEngine` without touching this view controller.
+/// grid, and footer trip summary, all fed by `OBDEngine` through
+/// `DashboardViewModel`.
 final class DashboardViewController: UIViewController {
     private let viewModel = DashboardViewModel()
 
@@ -20,11 +19,12 @@ final class DashboardViewController: UIViewController {
     private let engineLoadTile = ParameterTileView(title: "Engine Load")
     private let throttleTile = ParameterTileView(title: "Throttle Position")
 
+    private static let speedometerMaxKmh = 200.0
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
         configureGauges()
-        configureThresholds()
         layoutUI()
         bindViewModel()
     }
@@ -41,9 +41,7 @@ final class DashboardViewController: UIViewController {
 
     private func configureGauges() {
         speedometer.title = "Speed"
-        speedometer.unit = "km/h"
         speedometer.minValue = 0
-        speedometer.maxValue = 200
         speedometer.majorTickCount = 10
 
         tachometer.title = "RPM"
@@ -55,11 +53,15 @@ final class DashboardViewController: UIViewController {
         tachometer.valueFormatter = { String(format: "%.1f", $0 / 1000.0) }
     }
 
-    private func configureThresholds() {
-        let settings = SettingsStore.shared.settings.value
-        coolantTile.dangerThreshold = settings.coolantWarningCelsius
+    /// Units and warning limits come from Settings and can change at any time.
+    private func applySettings(_ settings: AppSettings) {
+        speedometer.unit = settings.speedUnit.symbol
+        speedometer.maxValue = settings.speedUnit.convert(fromKmh: Self.speedometerMaxKmh)
+        speedometer.dangerThreshold = settings.speedUnit.convert(fromKmh: settings.speedWarningKmh)
+        coolantTile.dangerThreshold = settings.temperatureUnit.convert(fromCelsius: settings.coolantWarningCelsius)
         voltageTile.dangerThreshold = settings.voltageWarningHigh
-        voltageTile.warningThreshold = nil
+        voltageTile.lowDangerThreshold = settings.voltageWarningLow
+        render(viewModel.snapshot.value)
     }
 
     private func layoutUI() {
@@ -129,6 +131,10 @@ final class DashboardViewController: UIViewController {
             self?.headerView.ecuStatusPill.update(for: state)
         }
 
+        SettingsStore.shared.settings.observe { [weak self] settings in
+            self?.applySettings(settings)
+        }
+
         viewModel.snapshot.observe { [weak self] snapshot in
             self?.render(snapshot)
         }
@@ -141,39 +147,43 @@ final class DashboardViewController: UIViewController {
     }
 
     private func render(_ snapshot: TelemetrySnapshot) {
+        let settings = SettingsStore.shared.settings.value
+
         if let speed = snapshot.vehicleSpeedKmh?.value {
-            speedometer.setValue(speed)
+            speedometer.setValue(settings.speedUnit.convert(fromKmh: speed))
+        } else {
+            speedometer.clearValue()
         }
         if let rpm = snapshot.engineRpm?.value {
             tachometer.setValue(rpm)
-        }
-        if let coolant = snapshot.coolantTempCelsius {
-            coolantTile.update(value: coolant.value, unit: "°C", source: coolant.source)
-        }
-        if let voltage = snapshot.controlModuleVoltage {
-            voltageTile.update(value: voltage.value, unit: "V", source: voltage.source, decimals: 1)
-        }
-        if let load = snapshot.engineLoadPercent {
-            engineLoadTile.update(value: load.value, unit: "%", source: load.source)
-        }
-        if let throttle = snapshot.throttlePositionPercent {
-            throttleTile.update(value: throttle.value, unit: "%", source: throttle.source)
+        } else {
+            tachometer.clearValue()
         }
 
-        updateFuelConsumptionTiles(with: snapshot)
+        let coolant = snapshot.coolantTempCelsius
+        coolantTile.update(value: coolant.map { settings.temperatureUnit.convert(fromCelsius: $0.value) },
+                           unit: settings.temperatureUnit.symbol, source: coolant?.source)
+        voltageTile.update(value: snapshot.controlModuleVoltage?.value, unit: "V",
+                           source: snapshot.controlModuleVoltage?.source, decimals: 1)
+        engineLoadTile.update(value: snapshot.engineLoadPercent?.value, unit: "%",
+                              source: snapshot.engineLoadPercent?.source)
+        throttleTile.update(value: snapshot.throttlePositionPercent?.value, unit: "%",
+                            source: snapshot.throttlePositionPercent?.source)
+
+        updateFuelConsumptionTiles(with: snapshot, profile: settings.vehicleProfile)
     }
 
-    private func updateFuelConsumptionTiles(with snapshot: TelemetrySnapshot) {
-        let profile = SettingsStore.shared.settings.value.vehicleProfile
-        guard let result = FuelConsumptionEngine.compute(snapshot: snapshot, profile: profile) else {
+    private func updateFuelConsumptionTiles(with snapshot: TelemetrySnapshot, profile: VehicleProfile) {
+        if let result = FuelConsumptionEngine.compute(snapshot: snapshot, profile: profile) {
+            fuelConsumptionTile.update(value: result.value, unit: result.isPer100km ? "L/100km" : "L/h",
+                                       source: result.source, decimals: 1)
+        } else {
             fuelConsumptionTile.update(text: "--", source: nil)
-            return
         }
-        fuelConsumptionTile.update(value: result.value, unit: result.isPer100km ? "L/100km" : "L/h",
-                                    source: result.source, decimals: 1)
 
+        // The average is an accumulated figure, still valid with no live reading.
         if let average = viewModel.tripComputer.sinceReset.value.averageConsumptionPer100km {
-            avgFuelConsumptionTile.update(value: average, unit: "L/100km", source: result.source, decimals: 1)
+            avgFuelConsumptionTile.update(value: average, unit: "L/100km", source: .calculated, decimals: 1)
         } else {
             avgFuelConsumptionTile.update(text: "--", source: nil)
         }

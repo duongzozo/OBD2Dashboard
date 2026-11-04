@@ -1,63 +1,57 @@
 import Foundation
 
-/// Single app-wide source of vehicle telemetry. Owns whichever data source
-/// is active — `OBDSimulator` in DEMO MODE, or the real `OBDEngine` once
-/// connected — so Dashboard, Live Data, Fuel Economy, and Trip Computer
-/// all observe the exact same stream instead of each starting its own
-/// simulator/engine (which would duplicate polling and let trip totals
-/// disagree between tabs). Started once from `RootTabBarController` and
-/// runs for the app's lifetime, matching the Trip Computer's need to keep
-/// accumulating regardless of which tab is on screen.
+/// Single app-wide source of vehicle telemetry. Owns the `OBDEngine` so
+/// Dashboard, Live Data, Fuel Economy, and Trip Computer all observe the exact
+/// same stream instead of each polling on its own (which would duplicate
+/// requests and let trip totals disagree between tabs). Started once from
+/// `RootTabBarController` and runs for the app's lifetime, matching the Trip
+/// Computer's need to keep accumulating regardless of which tab is on screen.
 final class TelemetryHub {
     static let shared = TelemetryHub()
 
     let snapshot: Observable<TelemetrySnapshot> = Observable(.empty)
-    let bluetoothState: Observable<ConnectionState> = Observable(.demoMode)
-    let ecuState: Observable<ConnectionState> = Observable(.demoMode)
+    let bluetoothState: Observable<ConnectionState> = Observable(.disconnected)
+    let ecuState: Observable<ConnectionState> = Observable(.disconnected)
+    let supportedPIDs: Observable<Set<OBDPID>> = Observable([])
+    let vehicleInfo: Observable<VehicleInfo> = Observable(.unknown)
     let tripComputer = TripComputer()
 
-    private let simulator: OBDSimulator
     private let bluetoothManager: BluetoothManager
     private let settingsStore: SettingsStore
     private var engine: OBDEngine?
-    private var isRunning = false
 
     init(settingsStore: SettingsStore = .shared, bluetoothManager: BluetoothManager = .shared) {
         self.settingsStore = settingsStore
         self.bluetoothManager = bluetoothManager
-        let interval = settingsStore.settings.value.dashboardPollingIntervalMs
-        self.simulator = OBDSimulator(config: .init(fastIntervalMs: interval, slowIntervalMs: 1000))
     }
 
     func start() {
-        guard !isRunning else { return }
-        isRunning = true
+        guard engine == nil else { return }
 
-        if settingsStore.settings.value.demoModeEnabled {
-            bluetoothState.value = .demoMode
-            ecuState.value = .demoMode
-            simulator.onSnapshotUpdate = { [weak self] snapshot in
-                self?.handle(snapshot)
-            }
-            simulator.start()
-        } else {
-            let realEngine = OBDEngine(bluetoothManager: bluetoothManager)
-            engine = realEngine
-            bluetoothManager.connectionState.observe { [weak self] state in
-                self?.bluetoothState.value = state
-            }
-            realEngine.ecuState.observe { [weak self] state in
-                self?.ecuState.value = state
-            }
-            realEngine.onSnapshotUpdate = { [weak self] snapshot in
-                self?.handle(snapshot)
-            }
-            bluetoothManager.autoReconnectIfEnabled()
+        let realEngine = OBDEngine(bluetoothManager: bluetoothManager)
+        engine = realEngine
+        bluetoothManager.connectionState.observe { [weak self] state in
+            self?.bluetoothState.value = state
         }
+        realEngine.ecuState.observe { [weak self] state in
+            self?.ecuState.value = state
+        }
+        realEngine.supportedPIDs.observe { [weak self] pids in
+            self?.supportedPIDs.value = pids
+        }
+        realEngine.vehicleInfo.observe { [weak self] info in
+            self?.vehicleInfo.value = info
+        }
+        realEngine.onSnapshotUpdate = { [weak self] snapshot in
+            self?.handle(snapshot)
+        }
+        bluetoothManager.autoReconnectIfEnabled()
     }
 
     private func handle(_ newSnapshot: TelemetrySnapshot) {
         snapshot.value = newSnapshot
-        tripComputer.update(with: newSnapshot, fuelRateLitersPerHour: newSnapshot.engineFuelRateLitersPerHour?.value)
+        let profile = settingsStore.settings.value.vehicleProfile
+        let fuelRate = FuelConsumptionEngine.fuelRate(snapshot: newSnapshot, profile: profile)
+        tripComputer.update(with: newSnapshot, fuelRateLitersPerHour: fuelRate?.litersPerHour)
     }
 }

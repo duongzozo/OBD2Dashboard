@@ -16,6 +16,7 @@ final class ConnectionViewController: UIViewController {
     /// `CBManagerState` transitions and `didDiscover` traffic while
     /// standing at the car.
     private let logTextView = UITextView()
+    private let vehicleInfoLabel = UILabel()
     private var devices: [DiscoveredPeripheral] = []
 
     init(bluetoothManager: BluetoothManager) {
@@ -50,6 +51,12 @@ final class ConnectionViewController: UIViewController {
         copyLogButton.translatesAutoresizingMaskIntoConstraints = false
         copyLogButton.addTarget(self, action: #selector(copyLogTapped), for: .touchUpInside)
 
+        vehicleInfoLabel.font = Theme.labelFont(size: 13)
+        vehicleInfoLabel.textColor = Theme.textSecondary
+        vehicleInfoLabel.numberOfLines = 0
+        vehicleInfoLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(vehicleInfoLabel)
+
         tableView.backgroundColor = .clear
         tableView.separatorColor = Theme.hairline
         tableView.dataSource = self
@@ -80,7 +87,11 @@ final class ConnectionViewController: UIViewController {
             // Device list on the left, live BLE log on the right — the
             // screen is landscape-locked, so a side-by-side split keeps
             // both readable without scrolling between them.
-            tableView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
+            vehicleInfoLabel.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 12),
+            vehicleInfoLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            vehicleInfoLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+
+            tableView.topAnchor.constraint(equalTo: vehicleInfoLabel.bottomAnchor, constant: 12),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             tableView.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.38),
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -95,6 +106,15 @@ final class ConnectionViewController: UIViewController {
     private func bind() {
         bluetoothManager.connectionState.observe { [weak self] state in
             self?.statusPill.update(for: state)
+            let isConnected = state == .connected
+            self?.scanButton.setTitle(isConnected ? "Disconnect" : "Scan for Adapters", for: .normal)
+        }
+        TelemetryHub.shared.vehicleInfo.observe { [weak self] info in
+            self?.vehicleInfoLabel.text = [
+                "Adapter: \(info.adapterVersion ?? "--")",
+                "Protocol: \(info.protocolName ?? "--")",
+                "VIN: \(info.vin ?? "--")"
+            ].joined(separator: "     ")
         }
         bluetoothManager.discoveredDevices.observe { [weak self] devices in
             self?.devices = devices
@@ -114,7 +134,11 @@ final class ConnectionViewController: UIViewController {
     }
 
     @objc private func scanTapped() {
-        bluetoothManager.scan()
+        if bluetoothManager.connectionState.value == .connected {
+            bluetoothManager.disconnect()
+        } else {
+            bluetoothManager.scan()
+        }
     }
 
     @objc private func copyLogTapped() {

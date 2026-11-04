@@ -76,6 +76,20 @@ final class OBDResponseParserTests: XCTestCase {
         XCTAssertNil(OBDResponseParser.hexBytes(fromLine: ""))
     }
 
+    func testVINFromMultiFrameCANReply() {
+        let raw = "014\r0:49020131464D\r1:43553933473839\r2:4B423132333435\r\r>"
+        XCTAssertEqual(OBDResponseParser.vin(fromResponse: raw), "1FMCU93G89KB12345")
+    }
+
+    func testVINFromOlderProtocolReply() {
+        let raw = "49020100000031\r49020246 4D4355\r4902033933 4738\r490204394B4231\r490205 32333435\r\r>"
+        XCTAssertEqual(OBDResponseParser.vin(fromResponse: raw), "1FMCU93G89KB12345")
+    }
+
+    func testVINIsNilWhenVehicleDoesNotAnswer() {
+        XCTAssertNil(OBDResponseParser.vin(fromResponse: "NO DATA\r\r>"))
+    }
+
     func testExtractResponseLineIgnoresBlankAndPrompt() {
         let line = OBDResponseParser.extractResponseLine(from: "\r\n41 05 7B\r\n>\r\n")
         XCTAssertEqual(line, "41 05 7B")

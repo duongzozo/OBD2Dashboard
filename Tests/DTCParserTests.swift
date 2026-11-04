@@ -24,6 +24,38 @@ final class DTCParserTests: XCTestCase {
         XCTAssertEqual(DTCParser.parse(bytes: bytes), ["P0300", "P0171"])
     }
 
+    func testCANReplySkipsCountByte() throws {
+        // 43, two codes: P0300, P0171. Reading the count as data gives wrong codes.
+        XCTAssertEqual(try DTCParser.codes(fromResponse: "430203000171\r\r>", responseMode: 0x43), ["P0300", "P0171"])
+    }
+
+    func testCANReplyWithNoCodes() throws {
+        XCTAssertEqual(try DTCParser.codes(fromResponse: "4300\r\r>", responseMode: 0x43), [])
+    }
+
+    func testOlderProtocolReplyHasNoCountByte() throws {
+        XCTAssertEqual(try DTCParser.codes(fromResponse: "43030001710000\r\r>", responseMode: 0x43), ["P0300", "P0171"])
+    }
+
+    func testMultiFrameCANReplyIsReassembledAndTrimmed() throws {
+        let raw = "00A\r0:43040300017101\r1:02010300000000\r\r>"
+        XCTAssertEqual(try DTCParser.codes(fromResponse: raw, responseMode: 0x43), ["P0300", "P0171", "P0102", "P0103"])
+    }
+
+    func testRepliesFromTwoECUsAreCombinedWithoutDuplicates() throws {
+        let raw = "43010300\r43020300 0171\r\r>"
+        XCTAssertEqual(try DTCParser.codes(fromResponse: raw, responseMode: 0x43), ["P0300", "P0171"])
+    }
+
+    func testNoDataMeansNoCodes() throws {
+        XCTAssertEqual(try DTCParser.codes(fromResponse: "NO DATA\r\r>", responseMode: 0x43), [])
+    }
+
+    func testFailureIsNotReportedAsNoCodes() {
+        XCTAssertThrowsError(try DTCParser.codes(fromResponse: "UNABLE TO CONNECT\r\r>", responseMode: 0x43))
+        XCTAssertThrowsError(try DTCParser.codes(fromResponse: "?\r\r>", responseMode: 0x43))
+    }
+
     func testEmptyBytesReturnsEmpty() {
         XCTAssertEqual(DTCParser.parse(bytes: []), [])
     }

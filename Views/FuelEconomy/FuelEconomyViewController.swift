@@ -2,7 +2,7 @@ import UIKit
 
 /// Real Phase 4 fuel economy screen: instantaneous consumption (with
 /// source badge), current-trip average, and since-reset average — each
-/// clearly labeled so ECU/calculated/estimated/demo values are never
+/// clearly labeled so ECU/calculated/estimated values are never
 /// confused (spec §6).
 final class FuelEconomyViewController: UIViewController {
     private let hub = TelemetryHub.shared
@@ -10,7 +10,6 @@ final class FuelEconomyViewController: UIViewController {
     private let instantTile = ParameterTileView(title: "Instantaneous")
     private let currentTripTile = ParameterTileView(title: "Current Trip Avg")
     private let sinceResetTile = ParameterTileView(title: "Since Reset Avg")
-    private let demoBadge = DemoModeBadge()
     private let resetButton = UIButton(type: .system)
 
     override func viewDidLoad() {
@@ -34,7 +33,7 @@ final class FuelEconomyViewController: UIViewController {
         tilesRow.spacing = 16
         tilesRow.distribution = .fillEqually
 
-        let stack = UIStackView(arrangedSubviews: [demoBadge, tilesRow, resetButton])
+        let stack = UIStackView(arrangedSubviews: [tilesRow, resetButton])
         stack.axis = .vertical
         stack.spacing = 20
         stack.alignment = .fill
@@ -53,9 +52,6 @@ final class FuelEconomyViewController: UIViewController {
     private func bind() {
         hub.snapshot.observe { [weak self] snapshot in
             self?.render(snapshot)
-        }
-        hub.bluetoothState.observe { [weak self] state in
-            self?.demoBadge.isHidden = state != .demoMode
         }
         hub.tripComputer.currentTrip.observe { [weak self] trip in
             self?.updateAverage(tile: self?.currentTripTile, trip: trip)

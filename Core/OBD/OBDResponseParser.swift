@@ -46,6 +46,57 @@ struct OBDResponseParser {
         return responseLines(from: raw).last ?? ""
     }
 
+    /// Reassembles a reply into complete messages, one per ECU answer. Replies
+    /// too long for one CAN frame arrive as a length line followed by numbered
+    /// frames (`014`, `0:490201...`, `1:...`), and are joined here and trimmed
+    /// to that length, which also removes the frame padding.
+    static func messages(fromResponse raw: String) -> [[UInt8]] {
+        var messages: [[UInt8]] = []
+        var frames: [UInt8]?
+        var expectedLength: Int?
+
+        func flushFrames() {
+            guard let assembled = frames else { return }
+            messages.append(expectedLength.map { Array(assembled.prefix($0)) } ?? assembled)
+            frames = nil
+            expectedLength = nil
+        }
+
+        for line in responseLines(from: raw) {
+            let compact = line.uppercased().filter { !$0.isWhitespace }
+
+            if compact.count == 3, let length = Int(compact, radix: 16) {
+                flushFrames()
+                expectedLength = length
+                continue
+            }
+
+            let parts = compact.split(separator: ":", omittingEmptySubsequences: false)
+            if parts.count == 2, parts[0].count == 1, parts[0].first?.isHexDigit == true,
+               let bytes = hexBytes(fromLine: String(parts[1])) {
+                frames = (frames ?? []) + bytes
+                continue
+            }
+
+            flushFrames()
+            if let bytes = hexBytes(fromLine: compact) {
+                messages.append(bytes)
+            }
+        }
+        flushFrames()
+        return messages
+    }
+
+    /// The VIN from a Mode 09 PID 02 reply, or nil if the vehicle gave none.
+    /// Older protocols send several `49 02 <seq> ...` messages, CAN sends one.
+    static func vin(fromResponse raw: String) -> String? {
+        let bytes = messages(fromResponse: raw)
+            .filter { $0.count > 3 && $0[0] == 0x49 && $0[1] == 0x02 }
+            .flatMap { $0.dropFirst(3) }
+        let text = String(decoding: bytes.filter { $0 != 0 }, as: UTF8.self)
+        return text.count == 17 && text.allSatisfy({ $0.isLetter || $0.isNumber }) ? text : nil
+    }
+
     /// A raw reply made readable for the on-device log.
     static func printable(_ raw: String) -> String {
         return raw.replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n")

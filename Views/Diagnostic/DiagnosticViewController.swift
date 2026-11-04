@@ -77,12 +77,18 @@ final class DiagnosticViewController: UIViewController {
         ])
     }
 
-    private func runScan(_ scan: @escaping (@escaping ([DTCEntry]) -> Void) -> Void, label: String) {
+    private func runScan(_ scan: @escaping (@escaping (Result<[DTCEntry], DiagnosticEngine.ScanError>) -> Void) -> Void, label: String) {
         statusLabel.text = "Scanning (\(label))..."
-        scan { [weak self] results in
+        scan { [weak self] result in
             guard let self = self else { return }
-            self.entries = results
-            self.statusLabel.text = results.isEmpty ? "\(label): no codes found." : "\(label): \(results.count) code(s) found."
+            switch result {
+            case .success(let found):
+                self.entries = found
+                self.statusLabel.text = found.isEmpty ? "\(label): no codes found." : "\(label): \(found.count) code(s) found."
+            case .failure(let error):
+                self.entries = []
+                self.statusLabel.text = "\(label) scan failed. \(error.message)"
+            }
             self.tableView.reloadData()
         }
     }
@@ -109,18 +115,24 @@ final class DiagnosticViewController: UIViewController {
         engine.clearDTCs { [weak self] success in
             guard let self = self else { return }
             guard success else {
-                self.statusLabel.text = "Clear command failed."
+                self.statusLabel.text = "The ECU did not confirm the clear. Many vehicles only allow it with the ignition on and the engine off."
                 return
             }
             // Re-read to verify, per spec §7 — never just assume success.
             self.statusLabel.text = "Cleared. Re-reading stored codes to verify..."
-            self.engine.scanStored { [weak self] remaining in
+            self.engine.scanStored { [weak self] result in
                 guard let self = self else { return }
-                self.entries = remaining
+                switch result {
+                case .success(let remaining):
+                    self.entries = remaining
+                    self.statusLabel.text = remaining.isEmpty
+                        ? "Stored codes cleared and verified empty. This does not guarantee the fault is fixed."
+                        : "\(remaining.count) stored code(s) still present after clear."
+                case .failure(let error):
+                    self.entries = []
+                    self.statusLabel.text = "Clear was accepted, but it could not be verified. \(error.message)"
+                }
                 self.tableView.reloadData()
-                self.statusLabel.text = remaining.isEmpty
-                    ? "Stored codes cleared and verified empty. This does not guarantee the fault is fixed."
-                    : "\(remaining.count) stored code(s) still present after clear."
             }
         }
     }

@@ -29,7 +29,6 @@ struct AppSettings: Codable, Equatable {
     var speedWarningKmh: Double = 140
     var nightModeEnabled: Bool = false
     var powerSaveModeEnabled: Bool = false
-    var demoModeEnabled: Bool = true
 
     // Phase 2 — Bluetooth adapter configuration. Confirmed against the
     // user's real ELM327 BLE adapter with LightBlue: service FFF0;
@@ -40,14 +39,6 @@ struct AppSettings: Codable, Equatable {
     // overridable here without a code change if a different adapter needs
     // different values.
     //
-    // IMPORTANT caveat for anyone debugging the empty-scan problem: that
-    // LightBlue session ran on a *different* device, not the target iPad
-    // mini 3. It therefore proves the adapter is genuine BLE — ruling out
-    // the "it's actually Classic SPP, invisible to CoreBluetooth" theory —
-    // but proves nothing about whether CoreBluetooth works on the iPad
-    // itself. Do not read it as "the device's Bluetooth stack is confirmed
-    // working": as of this writing, no BLE app of any kind has been shown
-    // to discover anything on that iPad.
     var bleServiceUUID: String = "FFF0"
     var bleWriteCharacteristicUUID: String = "FFF2"
     var bleNotifyCharacteristicUUID: String = "FFF1"
@@ -72,7 +63,6 @@ struct AppSettings: Codable, Equatable {
         speedWarningKmh = try container.decodeIfPresent(Double.self, forKey: .speedWarningKmh) ?? defaults.speedWarningKmh
         nightModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .nightModeEnabled) ?? defaults.nightModeEnabled
         powerSaveModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .powerSaveModeEnabled) ?? defaults.powerSaveModeEnabled
-        demoModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .demoModeEnabled) ?? defaults.demoModeEnabled
         bleServiceUUID = try container.decodeIfPresent(String.self, forKey: .bleServiceUUID) ?? defaults.bleServiceUUID
         bleWriteCharacteristicUUID = try container.decodeIfPresent(String.self, forKey: .bleWriteCharacteristicUUID) ?? defaults.bleWriteCharacteristicUUID
         bleNotifyCharacteristicUUID = try container.decodeIfPresent(String.self, forKey: .bleNotifyCharacteristicUUID) ?? defaults.bleNotifyCharacteristicUUID

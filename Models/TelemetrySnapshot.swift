@@ -1,17 +1,11 @@
 import Foundation
 
 /// A single timestamped reading of one vehicle parameter, tagged with where
-/// the value came from. Both the real OBD engine (later phases) and the
-/// Phase 1 simulator produce these, so the dashboard/view models never need
-/// to know which source they're looking at.
+/// the value came from.
 struct TelemetryValue: Equatable {
     var value: Double
     var source: DataSource
     var timestamp: Date
-
-    static func simulated(_ value: Double, at timestamp: Date = Date()) -> TelemetryValue {
-        TelemetryValue(value: value, source: .simulated, timestamp: timestamp)
-    }
 
     static func ecuReported(_ value: Double, at timestamp: Date = Date()) -> TelemetryValue {
         TelemetryValue(value: value, source: .ecuReported, timestamp: timestamp)
@@ -42,4 +36,26 @@ struct TelemetrySnapshot: Equatable {
     var oxygenSensor1VoltageVolts: TelemetryValue?
 
     static let empty = TelemetrySnapshot()
+
+    func value(for pid: OBDPID) -> TelemetryValue? {
+        switch pid {
+        case .vehicleSpeed: return vehicleSpeedKmh
+        case .engineRPM: return engineRpm
+        case .coolantTemp: return coolantTempCelsius
+        case .controlModuleVoltage: return controlModuleVoltage
+        case .engineLoad: return engineLoadPercent
+        case .throttlePosition: return throttlePositionPercent
+        case .intakeAirTemp: return intakeAirTempCelsius
+        case .mafAirFlow: return mafGramsPerSec
+        case .fuelTankLevel: return fuelTankLevelPercent
+        case .engineFuelRate: return engineFuelRateLitersPerHour
+        case .ambientAirTemp: return ambientAirTempCelsius
+        case .engineRuntime: return engineRuntimeSeconds
+        case .shortFuelTrim1: return shortTermFuelTrimPercent
+        case .longFuelTrim1: return longTermFuelTrimPercent
+        case .timingAdvance: return timingAdvanceDegrees
+        case .oxygenSensor1: return oxygenSensor1VoltageVolts
+        case .monitorStatus: return nil
+        }
+    }
 }

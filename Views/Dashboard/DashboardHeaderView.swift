@@ -7,7 +7,6 @@ final class DashboardHeaderView: UIView {
     let bluetoothStatusPill = StatusPillView()
     let ecuStatusPill = StatusPillView()
     private let clockLabel = UILabel()
-    let demoBadge = DemoModeBadge()
 
     init() {
         super.init(frame: .zero)
@@ -37,7 +36,7 @@ final class DashboardHeaderView: UIView {
         leftStack.alignment = .leading
         leftStack.spacing = 2
 
-        let statusStack = UIStackView(arrangedSubviews: [demoBadge, bluetoothStatusPill, ecuStatusPill, clockLabel])
+        let statusStack = UIStackView(arrangedSubviews: [bluetoothStatusPill, ecuStatusPill, clockLabel])
         statusStack.axis = .horizontal
         statusStack.alignment = .center
         statusStack.spacing = 10

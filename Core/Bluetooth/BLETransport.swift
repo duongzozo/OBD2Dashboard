@@ -181,6 +181,9 @@ final class BLETransport: NSObject, BluetoothTransport {
             self.scanGeneration += 1 // expires any pending heartbeat
             self.centralManager.stopScan()
             BLELog.shared.log("stopScan() — \(self.discoveredPeripherals.count) device(s) discovered this scan")
+            if self.transportState == .scanning {
+                self.setState(.disconnected)
+            }
         }
     }
 
@@ -341,7 +344,7 @@ extension BLETransport: CBPeripheralDelegate {
         }
         BLELog.shared.log("didDiscoverServices: [\(services.map { $0.uuid.uuidString }.joined(separator: ","))]")
         guard let targetService = services.first(where: { $0.uuid == config.serviceUUID }) else {
-            setState(.error("Configured service UUID \(config.serviceUUID) not found on this device — check Settings against your adapter's real UUID"))
+            setState(.error("Configured service UUID \(config.serviceUUID) not found on this device"))
             return
         }
         peripheral.discoverCharacteristics(nil, for: targetService)
@@ -359,15 +362,15 @@ extension BLETransport: CBPeripheralDelegate {
         notifyCharacteristic = characteristics.first(where: { $0.uuid == config.notifyCharacteristicUUID })
 
         guard let notifyCharacteristic = notifyCharacteristic else {
-            setState(.error("Configured notify characteristic UUID not found — check Settings"))
+            setState(.error("Configured notify characteristic UUID not found"))
             return
         }
         guard let writeCharacteristic = writeCharacteristic else {
-            setState(.error("Configured write characteristic UUID not found — check Settings"))
+            setState(.error("Configured write characteristic UUID not found"))
             return
         }
         guard let resolvedWriteType = BLETransport.resolveWriteType(preferred: config.writeType, properties: writeCharacteristic.properties) else {
-            setState(.error("Configured write characteristic \(writeCharacteristic.uuid) is not writable — check Settings"))
+            setState(.error("Configured write characteristic \(writeCharacteristic.uuid) is not writable"))
             return
         }
         writeType = resolvedWriteType

@@ -56,7 +56,6 @@ final class StatusPillView: UIView {
         case .scanning, .connecting, .initializing: update(text: state.shortLabel, color: Theme.warning)
         case .connected, .ecuReady: update(text: state.shortLabel, color: Theme.success)
         case .error: update(text: state.shortLabel, color: Theme.danger)
-        case .demoMode: update(text: state.shortLabel, color: Theme.accentSecondary)
         }
     }
 }

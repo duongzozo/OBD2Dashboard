@@ -11,7 +11,7 @@ final class TripComputerTests: XCTestCase {
     func testFirstUpdateSeedsTimestampWithoutAccumulating() {
         let computer = makeTripComputer()
         var snapshot = TelemetrySnapshot.empty
-        snapshot.vehicleSpeedKmh = .simulated(100)
+        snapshot.vehicleSpeedKmh = .ecuReported(100)
         computer.update(with: snapshot, fuelRateLitersPerHour: 6.0)
         XCTAssertEqual(computer.currentTrip.value.distanceKm, 0)
     }
@@ -22,7 +22,7 @@ final class TripComputerTests: XCTestCase {
 
         var first = TelemetrySnapshot.empty
         first.timestamp = start
-        first.vehicleSpeedKmh = .simulated(100)
+        first.vehicleSpeedKmh = .ecuReported(100)
         computer.update(with: first, fuelRateLitersPerHour: 6.0)
 
         // update() rejects gaps >= 5s (stale/timeout guard), so ticks must
@@ -30,7 +30,7 @@ final class TripComputerTests: XCTestCase {
         // instead of assuming a full hour elapsed.
         var second = TelemetrySnapshot.empty
         second.timestamp = start.addingTimeInterval(1)
-        second.vehicleSpeedKmh = .simulated(100)
+        second.vehicleSpeedKmh = .ecuReported(100)
         computer.update(with: second, fuelRateLitersPerHour: 6.0)
 
         XCTAssertEqual(computer.currentTrip.value.distanceKm, 100.0 / 3600.0, accuracy: 0.0001)
@@ -44,12 +44,12 @@ final class TripComputerTests: XCTestCase {
 
         var first = TelemetrySnapshot.empty
         first.timestamp = start
-        first.vehicleSpeedKmh = .simulated(100)
+        first.vehicleSpeedKmh = .ecuReported(100)
         computer.update(with: first, fuelRateLitersPerHour: 6.0)
 
         var second = TelemetrySnapshot.empty
         second.timestamp = start.addingTimeInterval(30) // stale/timeout gap
-        second.vehicleSpeedKmh = .simulated(100)
+        second.vehicleSpeedKmh = .ecuReported(100)
         computer.update(with: second, fuelRateLitersPerHour: 6.0)
 
         XCTAssertEqual(computer.currentTrip.value.distanceKm, 0)
@@ -60,11 +60,11 @@ final class TripComputerTests: XCTestCase {
         let start = Date()
         var first = TelemetrySnapshot.empty
         first.timestamp = start
-        first.vehicleSpeedKmh = .simulated(60)
+        first.vehicleSpeedKmh = .ecuReported(60)
         computer.update(with: first, fuelRateLitersPerHour: 5.0)
         var second = TelemetrySnapshot.empty
         second.timestamp = start.addingTimeInterval(1)
-        second.vehicleSpeedKmh = .simulated(60)
+        second.vehicleSpeedKmh = .ecuReported(60)
         computer.update(with: second, fuelRateLitersPerHour: 5.0)
 
         computer.resetCurrentTrip()

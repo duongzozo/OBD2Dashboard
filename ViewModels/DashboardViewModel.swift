@@ -1,7 +1,7 @@
 import Foundation
 
 /// Drives the Dashboard screen. All telemetry comes from the shared
-/// `TelemetryHub` (one simulator/engine for the whole app, started once at
+/// `TelemetryHub` (one engine for the whole app, started once at
 /// launch) — this view model just re-exposes its observables plus clock
 /// and vehicle-name bindings the view controller needs.
 final class DashboardViewModel {
@@ -26,6 +26,10 @@ final class DashboardViewModel {
         }
     }
 
+    deinit {
+        clockTimer?.invalidate()
+    }
+
     func start() {
         startClock()
     }
@@ -36,6 +40,7 @@ final class DashboardViewModel {
     }
 
     private func startClock() {
+        clockTimer?.invalidate()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         clockTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in

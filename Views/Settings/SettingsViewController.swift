@@ -1,9 +1,8 @@
 import UIKit
 
-/// Functional in Phase 1: vehicle profile fields, units, warning thresholds,
-/// night mode, power-save mode, and the demo-mode toggle, all persisted via
-/// `SettingsStore`. Adapter/BLE UUID fields (spec section 10) are deferred
-/// to Phase 2 since there's no Bluetooth transport yet to configure.
+/// Vehicle profile, units, warning limits, display and connection preferences,
+/// all persisted via `SettingsStore`. The BLE UUIDs stay out of this screen:
+/// `CBUUID` traps on an invalid string, so a typo would crash every launch.
 final class SettingsViewController: UIViewController {
     private let store = SettingsStore.shared
     private let scrollView = UIScrollView()
@@ -16,12 +15,22 @@ final class SettingsViewController: UIViewController {
     private let temperatureUnitSegment = UISegmentedControl(items: TemperatureUnit.allCases.map { $0.symbol })
     private let nightModeSwitch = UISwitch()
     private let powerSaveSwitch = UISwitch()
-    private let demoModeSwitch = UISwitch()
+    private let autoReconnectSwitch = UISwitch()
+    private let coolantWarningField = SettingsViewController.makeTextField(keyboard: .decimalPad)
+    private let voltageLowField = SettingsViewController.makeTextField(keyboard: .decimalPad)
+    private let voltageHighField = SettingsViewController.makeTextField(keyboard: .decimalPad)
+    private let speedWarningField = SettingsViewController.makeTextField(keyboard: .decimalPad)
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
         title = "Settings"
+
+        // The decimal pad has no return key: tapping away is how editing ends.
+        let dismissKeyboard = UITapGestureRecognizer(target: self, action: #selector(endEditing))
+        dismissKeyboard.cancelsTouchesInView = false
+        view.addGestureRecognizer(dismissKeyboard)
+
         buildLayout()
         loadFromStore()
     }
@@ -94,11 +103,16 @@ final class SettingsViewController: UIViewController {
         for segment in [fuelTypeSegment, speedUnitSegment, temperatureUnitSegment] {
             segment.addTarget(self, action: #selector(valuesChanged), for: .valueChanged)
         }
-        for toggle in [nightModeSwitch, powerSaveSwitch, demoModeSwitch] {
+        for toggle in [nightModeSwitch, powerSaveSwitch, autoReconnectSwitch] {
             toggle.addTarget(self, action: #selector(valuesChanged), for: .valueChanged)
         }
-        vehicleNameField.addTarget(self, action: #selector(valuesChanged), for: .editingDidEnd)
-        displacementField.addTarget(self, action: #selector(valuesChanged), for: .editingDidEnd)
+        for field in [vehicleNameField, displacementField, coolantWarningField,
+                      voltageLowField, voltageHighField, speedWarningField] {
+            field.addTarget(self, action: #selector(valuesChanged), for: .editingDidEnd)
+        }
+        for field in [coolantWarningField, voltageLowField, voltageHighField, speedWarningField] {
+            field.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        }
 
         contentStack.addArrangedSubview(section(title: "Vehicle Profile", rows: [
             labeledRow("Vehicle Name", vehicleNameField),
@@ -111,13 +125,20 @@ final class SettingsViewController: UIViewController {
             labeledRow("Temperature Unit", temperatureUnitSegment)
         ]))
 
-        contentStack.addArrangedSubview(section(title: "Display", rows: [
-            labeledRow("Night Mode", nightModeSwitch),
-            labeledRow("Power Save Mode", powerSaveSwitch)
+        contentStack.addArrangedSubview(section(title: "Warning Limits", rows: [
+            labeledRow("Coolant High (°C)", coolantWarningField),
+            labeledRow("Battery Voltage Low (V)", voltageLowField),
+            labeledRow("Battery Voltage High (V)", voltageHighField),
+            labeledRow("Speed High (km/h)", speedWarningField)
         ]))
 
-        contentStack.addArrangedSubview(section(title: "Data Source", rows: [
-            labeledRow("Demo Mode (Simulator)", demoModeSwitch)
+        contentStack.addArrangedSubview(section(title: "Display", rows: [
+            labeledRow("Night Mode", nightModeSwitch),
+            labeledRow("Power Save (slower updates, screen may sleep)", powerSaveSwitch)
+        ]))
+
+        contentStack.addArrangedSubview(section(title: "Connection", rows: [
+            labeledRow("Reconnect to Last Adapter Automatically", autoReconnectSwitch)
         ]))
     }
 
@@ -136,10 +157,20 @@ final class SettingsViewController: UIViewController {
         }
         nightModeSwitch.isOn = settings.nightModeEnabled
         powerSaveSwitch.isOn = settings.powerSaveModeEnabled
-        demoModeSwitch.isOn = settings.demoModeEnabled
+        autoReconnectSwitch.isOn = settings.autoReconnectEnabled
+        coolantWarningField.text = String(settings.coolantWarningCelsius)
+        voltageLowField.text = String(settings.voltageWarningLow)
+        voltageHighField.text = String(settings.voltageWarningHigh)
+        speedWarningField.text = String(settings.speedWarningKmh)
+    }
+
+    @objc private func endEditing() {
+        view.endEditing(true)
     }
 
     @objc private func valuesChanged() {
+        let nightModeChanged = nightModeSwitch.isOn != store.settings.value.nightModeEnabled
+
         store.update { settings in
             settings.vehicleProfile.name = vehicleNameField.text?.isEmpty == false
                 ? vehicleNameField.text! : settings.vehicleProfile.name
@@ -156,8 +187,20 @@ final class SettingsViewController: UIViewController {
             settings.temperatureUnit = TemperatureUnit.allCases[temperatureUnitSegment.selectedSegmentIndex]
             settings.nightModeEnabled = nightModeSwitch.isOn
             settings.powerSaveModeEnabled = powerSaveSwitch.isOn
-            settings.demoModeEnabled = demoModeSwitch.isOn
+            settings.autoReconnectEnabled = autoReconnectSwitch.isOn
+            if let value = Double(coolantWarningField.text ?? "") { settings.coolantWarningCelsius = value }
+            if let value = Double(voltageLowField.text ?? "") { settings.voltageWarningLow = value }
+            if let value = Double(voltageHighField.text ?? "") { settings.voltageWarningHigh = value }
+            if let value = Double(speedWarningField.text ?? "") { settings.speedWarningKmh = value }
         }
-        Theme.isNightMode = nightModeSwitch.isOn
+
+        if nightModeChanged {
+            Theme.isNightMode = nightModeSwitch.isOn
+            // Colors are read when views are built, so a new palette needs new views.
+            // Deferred because this control is about to be torn down.
+            DispatchQueue.main.async {
+                (UIApplication.shared.delegate as? AppDelegate)?.rebuildInterface()
+            }
+        }
     }
 }

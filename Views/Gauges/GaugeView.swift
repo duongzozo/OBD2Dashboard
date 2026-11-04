@@ -115,6 +115,12 @@ final class GaugeView: UIView {
         setValue(value, animated: false)
     }
 
+    /// Shows that there is no reading, as opposed to a reading of zero.
+    func clearValue() {
+        setValue(minValue)
+        valueLabel.text = "--"
+    }
+
     /// Updates only the value arc + digital readout — cheap enough to call
     /// on every telemetry tick without triggering a full view redraw.
     func setValue(_ newValue: Double, animated: Bool = false) {
